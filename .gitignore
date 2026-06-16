@@ -1,0 +1,23 @@
+# Python cache and test cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+pytest-cache-files-*/
+
+# Local test and benchmark output
+test_outputs/
+
+# Generated topology, routing, and simulation reports
+topology*.html
+routes*.txt
+router.txt
+simulation*.txt
+all_link_traffic*.txt
+tmp_*.txt
+
+# Local virtual environments and editor files
+.venv/
+venv/
+*.log
+.DS_Store
+Thumbs.db

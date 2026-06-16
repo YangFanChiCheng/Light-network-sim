@@ -1,0 +1,33 @@
+{
+  "topology": {
+    "type": "2d-fm-clos",
+    "nodes": 16,
+    "cards": 8,
+    "switches": 2,
+    "intra_bandwidth": 100,
+    "fm2d-bandwidth":100,
+    "switch_bandwidth": 1400,
+    "visualization_detail": "simplified"
+  },
+  "routing_mode": "source-node-jump",
+  "focus_card": "node0-card0",
+  "outputs": {
+    "topology": "topology.html",
+    "simulation": "simulation.txt",
+    "routes": "router.txt",
+    "all_links": null
+  },
+  "all_routes": true,
+  "no_progress": false,
+  "progress_interval": 5.0,
+  "workers": null,
+  "latency": {
+    "switch_forward_latency_ns": 200,
+    "card_forward_latency_ns": 100,
+    "optical_module_latency_ns": 10,
+    "npu_processing_latency_ns": 500,
+    "intra_1dfm_link_length_m": 0,
+    "fm2d_link_length_m": 0,
+    "switch_link_length_m": 10
+  }
+}
