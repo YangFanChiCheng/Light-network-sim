@@ -377,3 +377,46 @@ def test_cli_accepts_sparse_clos_run_config_file():
     assert "domain_size: 16" in report
     assert "single_rtt_latency_ns" in report
     assert "SparseClos cluster view" in topology_output.read_text(encoding="utf-8")
+
+
+def test_cli_accepts_sparse_clos_same_index_cluster_layout_config():
+    config_path = Path("test_outputs/cli_sparse_clos_same_index_config.json")
+    simulation_output = Path("test_outputs/cli_sparse_clos_same_index_simulation.txt")
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "topology": {
+                    "type": "sparse-clos",
+                    "sparse_clos": {
+                        "bst_r": 7,
+                        "bst_k": 2,
+                        "switch_port_num": 16,
+                        "cluster_internal_mode": "fullmesh-plus-switch",
+                        "cluster_layout": "same-index-across-nodes",
+                    },
+                    "intra_bandwidth": 50.0,
+                    "switch_bandwidth": 50.0,
+                },
+                "routing": {"mode": "detour-routing"},
+                "domain_sizes": [16],
+                "focus_card": "node0-card0",
+                "outputs": {"simulation": str(simulation_output)},
+                "no_progress": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, "main.py", "--config", str(config_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = simulation_output.read_text(encoding="utf-8")
+    assert "cluster_layout: same-index-across-nodes" in report
+    assert "cards_per_physical_node: 8" in report
+    assert "detour_types: cluster_detour" not in report

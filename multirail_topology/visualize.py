@@ -7,7 +7,7 @@ from pathlib import Path
 import plotly.graph_objects as go
 
 from .config import TopologyType, VisualizationDetail
-from .sparse_clos import ClusterInternalMode
+from .sparse_clos import ClusterInternalMode, ClusterLayout, derive_bst_parameters
 from .topology import MultiRailTopology
 
 
@@ -100,15 +100,20 @@ def _create_sparse_clos_figure(topology: MultiRailTopology) -> go.Figure:
     sparse_config = config.sparse_clos
     if sparse_config is None:
         raise ValueError("sparse_clos config is required for sparse-clos visualization")
+    sparse_params = derive_bst_parameters(sparse_config)
+    cluster_count = sparse_params["bst_v"]
+    cluster_size = sparse_params["cluster_size"]
+    representative_card_count = sparse_params["cards_per_physical_node"]
+    same_index_layout = sparse_config.cluster_layout == ClusterLayout.SAME_INDEX_ACROSS_NODES
 
     cluster_positions = {
         cluster_index: (cluster_index * 3.0, 6.0)
-        for cluster_index in range(config.M)
+        for cluster_index in range(cluster_count)
     }
     switch_positions = {
         switch_index: (
-            (switch_index % max(1, config.M)) * 3.0,
-            1.8 - (switch_index // max(1, config.M)) * 1.0,
+            (switch_index % max(1, cluster_count)) * 3.0,
+            1.8 - (switch_index // max(1, cluster_count)) * 1.0,
         )
         for switch_index in range(config.X)
     }
@@ -116,13 +121,13 @@ def _create_sparse_clos_figure(topology: MultiRailTopology) -> go.Figure:
     representative_origin_y = -5.2
     representative_columns = 8
     representative_row_spacing = 1.35
-    representative_rows = max(1, (config.N + representative_columns - 1) // representative_columns)
+    representative_rows = max(1, (representative_card_count + representative_columns - 1) // representative_columns)
     card_positions = {
         card_index: (
             representative_origin_x + (card_index % representative_columns) * 0.9,
             representative_origin_y - (card_index // representative_columns) * representative_row_spacing,
         )
-        for card_index in range(config.N)
+        for card_index in range(representative_card_count)
     }
     representative_switch_position = (
         representative_origin_x + representative_columns * 0.9 + 1.2,
@@ -152,10 +157,11 @@ def _create_sparse_clos_figure(topology: MultiRailTopology) -> go.Figure:
     intra_x: list[float | None] = []
     intra_y: list[float | None] = []
     if sparse_config.cluster_internal_mode == ClusterInternalMode.FULLMESH_PLUS_SWITCH:
-        for group_start in range(0, config.N, 8):
+        group_step = representative_card_count if same_index_layout else 8
+        for group_start in range(0, representative_card_count, group_step):
             group_cards = [
                 card_index
-                for card_index in range(group_start, min(group_start + 8, config.N))
+                for card_index in range(group_start, min(group_start + group_step, representative_card_count))
             ]
             for left_index, right_index in combinations(group_cards, 2):
                 left_x, left_y = card_positions[left_index]
@@ -174,7 +180,13 @@ def _create_sparse_clos_figure(topology: MultiRailTopology) -> go.Figure:
     switch_fanout_x: list[float | None] = []
     switch_fanout_y: list[float | None] = []
     representative_switch_x, representative_switch_y = representative_switch_position
-    for card_x, card_y in card_positions.values():
+    representative_switch_block = topology.graph.nodes["switch0"]["cluster_block"] if "switch0" in topology.graph else ()
+    if same_index_layout:
+        fanout_card_indices = [card_index for card_index in representative_switch_block if card_index in card_positions]
+    else:
+        fanout_card_indices = list(card_positions)
+    for card_index in fanout_card_indices:
+        card_x, card_y = card_positions[card_index]
         switch_fanout_x.extend([card_x, representative_switch_x, None])
         switch_fanout_y.extend([card_y, representative_switch_y, None])
 
@@ -196,7 +208,7 @@ def _create_sparse_clos_figure(topology: MultiRailTopology) -> go.Figure:
             textposition="top center",
             marker={"symbol": "square", "size": 14, "color": "#27ae60", "line": {"width": 0.8, "color": "#263238"}},
             hovertext=[
-                f"cluster: {cluster_index}<br>cluster size: {config.N}<br>ports/card: {sparse_config.bst_r}"
+                f"cluster: {cluster_index}<br>cluster size: {cluster_size}<br>ports/card: {sparse_config.bst_r}"
                 for cluster_index in cluster_positions
             ],
             hoverinfo="text",
@@ -245,7 +257,7 @@ def _create_sparse_clos_figure(topology: MultiRailTopology) -> go.Figure:
             textposition="bottom center",
             marker={"symbol": "circle", "size": 8, "color": "#dbeafe", "line": {"width": 0.8, "color": "#1f6feb"}},
             hovertext=[
-                f"representative cluster card: {card_index}<br>mode: {sparse_config.cluster_internal_mode.value}"
+                _sparse_representative_card_hover(card_index, sparse_config.cluster_layout)
                 for card_index in card_positions
             ],
             hoverinfo="text",
@@ -260,7 +272,7 @@ def _create_sparse_clos_figure(topology: MultiRailTopology) -> go.Figure:
             text=["Switch example"],
             textposition="middle right",
             marker={"symbol": "square", "size": 14, "color": "#f2c94c", "line": {"width": 0.8, "color": "#263238"}},
-            hovertext=[f"representative switch example<br>connected cards: {config.N}"],
+            hovertext=[f"representative switch example<br>connected cards: {len(fanout_card_indices)}"],
             hoverinfo="text",
             name="SparseClos representative switch example",
         )
@@ -270,9 +282,9 @@ def _create_sparse_clos_figure(topology: MultiRailTopology) -> go.Figure:
     figure.update_layout(
         title=(
             "SparseClos cluster view and representative cluster, "
-            f"v={config.M}, r={sparse_config.bst_r}, b={config.X}, "
+            f"v={cluster_count}, r={sparse_config.bst_r}, b={config.X}, "
             f"k={sparse_config.bst_k}, lambda={sparse_config.bst_lambda}, "
-            f"cluster_size={config.N}"
+            f"cluster_size={cluster_size}, layout={sparse_config.cluster_layout.value}"
         ),
         showlegend=True,
         hovermode="closest",
@@ -284,6 +296,15 @@ def _create_sparse_clos_figure(topology: MultiRailTopology) -> go.Figure:
     )
     figure.update_yaxes(scaleanchor="x", scaleratio=1)
     return figure
+
+
+def _sparse_representative_card_hover(card_index: int, layout: ClusterLayout) -> str:
+    if layout == ClusterLayout.SAME_INDEX_ACROSS_NODES:
+        return (
+            f"representative physical node card: {card_index}<br>"
+            f"cluster: {card_index}<br>layout: {layout.value}"
+        )
+    return f"representative cluster card: {card_index}<br>layout: {layout.value}"
 
 
 def _curved_segment_points(

@@ -8,6 +8,7 @@ from pathlib import Path
 import networkx as nx
 
 from .config import TopologyType
+from .sparse_clos import ClusterLayout
 from .topology import MultiRailTopology
 
 
@@ -263,7 +264,10 @@ def _detour_route(
     if domain_size is None or domain_size >= total_cards:
         return _shortest_path(topology, source_card, destination_card)
 
-    if domain_size < 8:
+    if _is_sparse_same_index_layout(topology) and domain_size > topology.config.N:
+        return _shortest_path(topology, source_card, destination_card)
+
+    if domain_size <= 8:
         route = _sparse_clos_card_detour(topology, source_card, destination_card)
         if route is not None:
             return route
@@ -316,8 +320,8 @@ def _sparse_clos_cluster_detour(
 ) -> RouteResult | None:
     source = _card_attributes(topology, source_card)
     destination = _card_attributes(topology, destination_card)
-    source_cluster = source["compute_index"]
-    destination_cluster = destination["compute_index"]
+    source_cluster = source["cluster_index"]
+    destination_cluster = destination["cluster_index"]
     if source_cluster == destination_cluster:
         return None
 
@@ -506,9 +510,19 @@ def _card_attributes(topology: MultiRailTopology, card_id: str) -> dict[str, int
     return {
         "compute_index": int(attributes["compute_index"]),
         "card_index": int(attributes["card_index"]),
+        "cluster_index": int(attributes.get("cluster_index", attributes["compute_index"])),
+        "cluster_card_index": int(attributes.get("cluster_card_index", attributes["card_index"])),
         "switch_group": int(attributes["switch_group"]),
         "fm2d_domain": int(attributes.get("fm2d_domain", -1)),
     }
+
+
+def _is_sparse_same_index_layout(topology: MultiRailTopology) -> bool:
+    return (
+        topology.config.topology_type == TopologyType.SPARSE_CLOS
+        and topology.config.sparse_clos is not None
+        and topology.config.sparse_clos.cluster_layout == ClusterLayout.SAME_INDEX_ACROSS_NODES
+    )
 
 
 def _card_switch_groups(topology: MultiRailTopology, card_id: str) -> tuple[int, ...]:

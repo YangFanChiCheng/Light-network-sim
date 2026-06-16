@@ -10,6 +10,11 @@ class ClusterInternalMode(StrEnum):
     SWITCH_ONLY = "switch-only"
 
 
+class ClusterLayout(StrEnum):
+    CONTIGUOUS = "contiguous"
+    SAME_INDEX_ACROSS_NODES = "same-index-across-nodes"
+
+
 @dataclass(frozen=True)
 class SparseClosConfig:
     bst_r: int
@@ -19,6 +24,7 @@ class SparseClosConfig:
     bst_v: int | None = None
     bst_b: int | None = None
     cluster_internal_mode: ClusterInternalMode = ClusterInternalMode.FULLMESH_PLUS_SWITCH
+    cluster_layout: ClusterLayout = ClusterLayout.CONTIGUOUS
 
     def __post_init__(self) -> None:
         if isinstance(self.cluster_internal_mode, str):
@@ -26,6 +32,12 @@ class SparseClosConfig:
                 self,
                 "cluster_internal_mode",
                 ClusterInternalMode(self.cluster_internal_mode),
+            )
+        if isinstance(self.cluster_layout, str):
+            object.__setattr__(
+                self,
+                "cluster_layout",
+                ClusterLayout(self.cluster_layout),
             )
 
         for name in ("bst_r", "bst_k", "bst_lambda", "switch_port_num"):
@@ -59,6 +71,8 @@ class SparseClosConfig:
             and cluster_size % 8 != 0
         ):
             raise ValueError("cluster_size must be divisible by 8 for fullmesh-plus-switch")
+        if self.cluster_layout == ClusterLayout.SAME_INDEX_ACROSS_NODES and derived_v != 8:
+            raise ValueError("same-index-across-nodes requires bst_v to be 8")
 
 
 def derive_bst_parameters(config: SparseClosConfig) -> dict[str, int]:
@@ -71,7 +85,21 @@ def derive_bst_parameters(config: SparseClosConfig) -> dict[str, int]:
         "bst_lambda": config.bst_lambda,
         "cluster_size": cluster_size,
         "total_cards": int(config.bst_v) * cluster_size,
+        "physical_node_count": _physical_node_count(config, cluster_size),
+        "cards_per_physical_node": _cards_per_physical_node(config, cluster_size),
     }
+
+
+def _physical_node_count(config: SparseClosConfig, cluster_size: int) -> int:
+    if config.cluster_layout == ClusterLayout.SAME_INDEX_ACROSS_NODES:
+        return cluster_size
+    return int(config.bst_v)
+
+
+def _cards_per_physical_node(config: SparseClosConfig, cluster_size: int) -> int:
+    if config.cluster_layout == ClusterLayout.SAME_INDEX_ACROSS_NODES:
+        return int(config.bst_v)
+    return cluster_size
 
 
 def generate_bst_blocks(config: SparseClosConfig) -> tuple[tuple[int, ...], ...]:

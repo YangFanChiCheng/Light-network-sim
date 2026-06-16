@@ -1009,6 +1009,9 @@ def _render_topology_metadata(topology: MultiRailTopology) -> list[str]:
         f"bst_lambda: {params['bst_lambda']}",
         f"cluster_size: {params['cluster_size']}",
         f"total_cards: {params['total_cards']}",
+        f"cluster_layout: {topology.config.sparse_clos.cluster_layout.value}",
+        f"physical_node_count: {params['physical_node_count']}",
+        f"cards_per_physical_node: {params['cards_per_physical_node']}",
     ]
 
 
@@ -1119,7 +1122,10 @@ def _default_domain_sizes(topology: MultiRailTopology, card_count: int) -> list[
     if topology.config.topology_type != TopologyType.SPARSE_CLOS:
         return factors(card_count)
 
-    cluster_size = topology.config.N
+    if topology.config.sparse_clos is None:
+        cluster_size = topology.config.N
+    else:
+        cluster_size = derive_bst_parameters(topology.config.sparse_clos)["cluster_size"]
     small_domains = [value for value in factors(cluster_size) if value != 1]
     large_domains = list(range(cluster_size * 2, card_count + 1, cluster_size))
     return small_domains + large_domains

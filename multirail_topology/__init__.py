@@ -23,6 +23,7 @@ from .simulation import (
 )
 from .sparse_clos import (
     ClusterInternalMode,
+    ClusterLayout,
     SparseClosConfig,
     derive_bst_parameters,
     generate_bst_blocks,
@@ -39,6 +40,7 @@ __all__ = [
     "RoutingMode",
     "SimulationResult",
     "ClusterInternalMode",
+    "ClusterLayout",
     "SparseClosConfig",
     "TopologyType",
     "VisualizationDetail",

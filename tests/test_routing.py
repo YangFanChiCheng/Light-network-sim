@@ -10,7 +10,7 @@ from multirail_topology.routing import (
     export_representative_routes,
     route_between_cards,
 )
-from multirail_topology.sparse_clos import ClusterInternalMode, SparseClosConfig
+from multirail_topology.sparse_clos import ClusterInternalMode, ClusterLayout, SparseClosConfig
 
 
 def _topology() -> MultiRailTopology:
@@ -213,6 +213,23 @@ def _sparse_topology(switch_port_num: int = 16) -> MultiRailTopology:
     return topology
 
 
+def _same_index_sparse_topology() -> MultiRailTopology:
+    topology = MultiRailTopology(
+        MultiRailTopologyConfig(
+            topology_type=TopologyType.SPARSE_CLOS,
+            sparse_clos=SparseClosConfig(
+                bst_r=7,
+                bst_k=2,
+                switch_port_num=16,
+                cluster_internal_mode=ClusterInternalMode.FULLMESH_PLUS_SWITCH,
+                cluster_layout=ClusterLayout.SAME_INDEX_ACROSS_NODES,
+            ),
+        )
+    )
+    topology.build_graph()
+    return topology
+
+
 def test_sparse_clos_shortest_path_uses_shared_switch_between_clusters():
     route = route_between_cards(
         _sparse_topology(),
@@ -300,3 +317,28 @@ def test_sparse_clos_detour_keeps_full_all2all_on_shortest_path():
 
     assert route.route_type == "shortest_path"
     assert route.paths == [["node0-card0", "switch0", "node1-card0"]]
+
+
+def test_sparse_clos_same_index_layout_shortest_path_uses_physical_fullmesh():
+    route = route_between_cards(
+        _same_index_sparse_topology(),
+        "node0-card0",
+        "node0-card5",
+        mode=RoutingMode.SHORTEST_PATH,
+    )
+
+    assert route.route_type == "shortest_path"
+    assert route.paths == [["node0-card0", "node0-card5"]]
+
+
+def test_sparse_clos_same_index_layout_detour_skips_cluster_detour_above_8p():
+    route = route_between_cards(
+        _same_index_sparse_topology(),
+        "node0-card0",
+        "node1-card1",
+        mode=RoutingMode.DETOUR_ROUTING,
+        domain_size=16,
+    )
+
+    assert route.route_type == "shortest_path"
+    assert all(len(path) <= 3 for path in route.paths)

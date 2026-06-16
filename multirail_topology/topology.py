@@ -6,7 +6,7 @@ import networkx as nx
 
 from .config import MultiRailTopologyConfig
 from .config import TopologyType
-from .sparse_clos import ClusterInternalMode, generate_bst_blocks
+from .sparse_clos import ClusterInternalMode, ClusterLayout, derive_bst_parameters, generate_bst_blocks
 
 
 class MultiRailTopology:
@@ -80,7 +80,10 @@ class MultiRailTopology:
             raise ValueError("sparse_clos config is required for sparse-clos topology")
 
         blocks = generate_bst_blocks(sparse_config)
-        cluster_switches: dict[int, list[int]] = {cluster_id: [] for cluster_id in range(self.config.M)}
+        sparse_params = derive_bst_parameters(sparse_config)
+        cluster_count = sparse_params["bst_v"]
+        cluster_size = sparse_params["cluster_size"]
+        cluster_switches: dict[int, list[int]] = {cluster_id: [] for cluster_id in range(cluster_count)}
 
         for switch_index, block in enumerate(blocks):
             self.graph.add_node(
@@ -93,7 +96,32 @@ class MultiRailTopology:
             for cluster_id in block:
                 cluster_switches[cluster_id].append(switch_index)
 
-        for cluster_index in range(self.config.M):
+        if sparse_config.cluster_layout == ClusterLayout.SAME_INDEX_ACROSS_NODES:
+            self._add_sparse_same_index_nodes(
+                sparse_config,
+                cluster_switches,
+                cluster_count,
+                cluster_size,
+            )
+        else:
+            self._add_sparse_contiguous_nodes(
+                sparse_config,
+                cluster_switches,
+                cluster_count,
+                cluster_size,
+            )
+
+        self._built = True
+        return self.graph
+
+    def _add_sparse_contiguous_nodes(
+        self,
+        sparse_config,
+        cluster_switches: dict[int, list[int]],
+        cluster_count: int,
+        cluster_size: int,
+    ) -> None:
+        for cluster_index in range(cluster_count):
             compute_id = self._compute_id(cluster_index)
             self.graph.add_node(
                 compute_id,
@@ -103,13 +131,15 @@ class MultiRailTopology:
             )
 
             switch_groups = tuple(cluster_switches[cluster_index])
-            for card_index in range(self.config.N):
+            for card_index in range(cluster_size):
                 card_id = self._card_id(cluster_index, card_index)
                 self.graph.add_node(
                     card_id,
                     node_type="card",
                     compute_index=cluster_index,
                     card_index=card_index,
+                    cluster_index=cluster_index,
+                    cluster_card_index=card_index,
                     switch_group=switch_groups[0],
                     switch_groups=switch_groups,
                     fm2d_domain=-1,
@@ -124,7 +154,7 @@ class MultiRailTopology:
                     )
 
             if sparse_config.cluster_internal_mode == ClusterInternalMode.FULLMESH_PLUS_SWITCH:
-                for group_start in range(0, self.config.N, 8):
+                for group_start in range(0, cluster_size, 8):
                     card_ids = [
                         self._card_id(cluster_index, card_index)
                         for card_index in range(group_start, group_start + 8)
@@ -137,8 +167,57 @@ class MultiRailTopology:
                             bandwidth=float(self.config.intra_bandwidth),
                         )
 
-        self._built = True
-        return self.graph
+    def _add_sparse_same_index_nodes(
+        self,
+        sparse_config,
+        cluster_switches: dict[int, list[int]],
+        cluster_count: int,
+        cluster_size: int,
+    ) -> None:
+        for physical_node_index in range(cluster_size):
+            compute_id = self._compute_id(physical_node_index)
+            self.graph.add_node(
+                compute_id,
+                node_type="compute",
+                compute_index=physical_node_index,
+                label=f"Node {physical_node_index}",
+            )
+
+            for card_index in range(cluster_count):
+                switch_groups = tuple(cluster_switches[card_index])
+                card_id = self._card_id(physical_node_index, card_index)
+                self.graph.add_node(
+                    card_id,
+                    node_type="card",
+                    compute_index=physical_node_index,
+                    card_index=card_index,
+                    cluster_index=card_index,
+                    cluster_card_index=physical_node_index,
+                    switch_group=switch_groups[0],
+                    switch_groups=switch_groups,
+                    fm2d_domain=-1,
+                    label=f"N{physical_node_index}:C{card_index}",
+                )
+                for switch_index in switch_groups:
+                    self.graph.add_edge(
+                        card_id,
+                        self._switch_id(switch_index),
+                        link_type="switch",
+                        bandwidth=float(self.config.switch_bandwidth),
+                    )
+
+            if sparse_config.cluster_internal_mode == ClusterInternalMode.FULLMESH_PLUS_SWITCH:
+                card_ids = [
+                    self._card_id(physical_node_index, card_index)
+                    for card_index in range(cluster_count)
+                ]
+                for left_card, right_card in combinations(card_ids, 2):
+                    self.graph.add_edge(
+                        left_card,
+                        right_card,
+                        link_type="intra",
+                        bandwidth=float(self.config.intra_bandwidth),
+                    )
 
     def fm2d_domain_for_node(self, node_index: int) -> int:
         if node_index < 0 or node_index >= self.config.M:

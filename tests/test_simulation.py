@@ -13,7 +13,7 @@ from multirail_topology.simulation import (
     simulate_domain_sizes,
 )
 from multirail_topology.latency import LatencyConfig
-from multirail_topology.sparse_clos import ClusterInternalMode, SparseClosConfig
+from multirail_topology.sparse_clos import ClusterInternalMode, ClusterLayout, SparseClosConfig
 
 
 def _topology() -> MultiRailTopology:
@@ -511,3 +511,39 @@ def test_sparse_clos_detour_falls_back_when_cluster_detour_is_worse():
         shortest.focus_card_bandwidth_efficiency
     )
     assert "cluster_detour" not in detour.route_type_counts
+
+
+def test_sparse_clos_same_index_layout_report_metadata_and_detour_scope(tmp_path):
+    topology = MultiRailTopology(
+        MultiRailTopologyConfig(
+            topology_type="sparse-clos",
+            sparse_clos=SparseClosConfig(
+                bst_r=7,
+                bst_k=2,
+                switch_port_num=16,
+                cluster_internal_mode=ClusterInternalMode.FULLMESH_PLUS_SWITCH,
+                cluster_layout=ClusterLayout.SAME_INDEX_ACROSS_NODES,
+            ),
+            intra_bandwidth=50.0,
+            switch_bandwidth=50.0,
+        )
+    )
+    topology.build_graph()
+    output_path = tmp_path / "same_index_sparse_report.txt"
+
+    export_simulation_report(
+        topology,
+        output_path,
+        domain_sizes=[8, 16],
+        mode=RoutingMode.DETOUR_ROUTING,
+        focus_card="node0-card0",
+        workers=1,
+    )
+
+    report = output_path.read_text(encoding="utf-8")
+    assert "cluster_layout: same-index-across-nodes" in report
+    assert "physical_node_count: 8" in report
+    assert "cards_per_physical_node: 8" in report
+    assert "domain_size: 8" in report
+    assert "domain_size: 16" in report
+    assert "detour_types: cluster_detour" not in report

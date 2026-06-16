@@ -69,6 +69,31 @@ focus card 只使用 1 条 fullmesh 边，效率为：
 
 ## 路径模板
 
+### Cluster 布局兼容性
+
+SparseClos 后续支持两种 cluster 布局：
+
+- `contiguous`：逻辑 cluster 等于图中的 compute node，当前实现方式。
+- `same-index-across-nodes`：物理形态为 `cluster_size` 个节点、每节点 `v` 张卡；所有物理节点的同号卡组成一个逻辑 cluster。
+
+因此 detour-routing 不能继续假设 `compute_index == cluster_index`。所有跨 cluster 判断、共享 switch 查询和中转 cluster 选择都必须使用卡节点上的 `cluster_index` 属性；物理节点内 fullmesh 判断则使用 `compute_index`。
+
+在 `same-index-across-nodes` 下：
+
+- 绕路只在物理 8P 内的小通信域有意义。`EP <= cards_per_physical_node` 且通信域落在同一个物理节点内时，可使用 `card_detour`，候选中转卡来自同一个物理节点的其它卡。
+- `EP > cards_per_physical_node` 时不启用 `cluster_detour`。该布局下每个物理节点内已经包含全部 `v` 个逻辑 cluster 的一张卡；当通信域超过一个 8P 后，流量天然覆盖多个物理节点和所有逻辑 cluster，每张卡通过其同号卡 cluster 能连接到完整的 SparseClos 上方交换机集合，继续绕到第三方 cluster 会引入额外共享链路和时延，预期收益不大。
+- 对 `EP > cards_per_physical_node` 的通信域，`detour-routing` 应回退为 `shortest-path`，报告中的 `route_types` / `detour_types` 输出 `none`。
+- 如果后续仍需要实验跨 cluster 绕路，应作为单独显式实验选项，而不是 `same-index-across-nodes` 的默认 detour 行为。
+
+因此，下面的中转 cluster 选择规则只适用于 `contiguous` 布局下的 `cluster_detour`。如果未来开启 `same-index-across-nodes` 的实验性跨 cluster 绕路，中转卡选择需要输出物理节点和卡槽均确定的 card id。推荐规则为：
+
+```text
+relay_physical_node = (source_physical_node + destination_physical_node + intermediate_cluster_id) % cluster_size
+relay_card = node{relay_physical_node}-card{intermediate_cluster_id}
+```
+
+这样每个中转逻辑 cluster 的流量会分散到不同物理节点上的同号卡，避免集中到单一 relay card。
+
 ### EP < 8：cluster 内小通信域卡绕路
 
 对同一 8P fullmesh 小组内的两张卡 `src` 和 `dst`，候选路径分三类：
@@ -304,6 +329,7 @@ detour_types: card_detour | cluster_detour | none
 - `EP < 8` 同 8P 小组内通信时，detour-routing 返回 direct、mid-card、switch 三类路径，报告输出 `card_detour`。
 - `EP < 8` 报告能体现绕路共享链路，`all_link_efficiency` 不应被断言为 1.0。
 - `EP > cluster_size` 且不是整网 all2all 时，跨 cluster detour-routing 返回 direct 和 via-cluster 两类路径，报告输出 `cluster_detour`。
+- `same-index-across-nodes` 布局下，`EP <= cards_per_physical_node` 的物理 8P 内通信可输出 `card_detour`；`EP > cards_per_physical_node` 时不输出 `cluster_detour`，应回退 shortest-path 并输出 `none`。
 - 整网 all2all 使用 shortest-path，报告输出 `none`。
 - 如果中转 cluster 产生新热点，报告能定位到对应 directed link。
 - 既有 shortest-path、source-node-jump、destination-node-jump 测试不变。

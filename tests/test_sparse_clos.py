@@ -4,6 +4,7 @@ import pytest
 
 from multirail_topology.sparse_clos import (
     ClusterInternalMode,
+    ClusterLayout,
     SparseClosConfig,
     derive_bst_parameters,
     generate_bst_blocks,
@@ -26,6 +27,8 @@ def test_sparse_clos_derives_bst_tuple_for_k3_v33_case():
         "bst_lambda": 1,
         "cluster_size": 42,
         "total_cards": 1386,
+        "physical_node_count": 33,
+        "cards_per_physical_node": 42,
     }
 
 
@@ -60,6 +63,22 @@ def test_sparse_clos_fullmesh_mode_requires_8_card_groups():
             bst_k=3,
             switch_port_num=128,
             cluster_internal_mode=ClusterInternalMode.FULLMESH_PLUS_SWITCH,
+        )
+
+
+def test_sparse_clos_defaults_to_contiguous_cluster_layout():
+    config = SparseClosConfig(bst_r=2, bst_k=2, switch_port_num=16)
+
+    assert config.cluster_layout == ClusterLayout.CONTIGUOUS
+
+
+def test_sparse_clos_same_index_layout_requires_eight_clusters():
+    with pytest.raises(ValueError, match="same-index-across-nodes requires bst_v to be 8"):
+        SparseClosConfig(
+            bst_r=2,
+            bst_k=2,
+            switch_port_num=16,
+            cluster_layout="same-index-across-nodes",
         )
 
 

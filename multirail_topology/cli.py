@@ -87,6 +87,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="SparseClos cluster internal connection mode.",
     )
+    parser.add_argument(
+        "--cluster-layout",
+        choices=["contiguous", "same-index-across-nodes"],
+        default=None,
+        help="SparseClos cluster layout.",
+    )
     parser.add_argument("--output", default=DEFAULTS["output"], help="Output HTML path.")
     parser.add_argument(
         "--routing-mode",
@@ -324,6 +330,7 @@ def _resolve_sparse_clos_config(
         "bst_b": "bst_b",
         "switch_port_num": "switch_port_num",
         "cluster_internal_mode": "cluster_internal_mode",
+        "cluster_layout": "cluster_layout",
     }
     for attr, key in key_map.items():
         cli_value = getattr(args, attr)

@@ -38,6 +38,7 @@
 - cluster 规模由 `cluster_size = floor(switch_port_num / k)` 推导。例如 `switch_port_num = 128, k = 2` 时，每个 cluster 有 64 张卡。
 - `fullmesh-plus-switch` 模式下，每个 cluster 内按连续 8P 小组建立卡间 fullmesh，其余端口连接上方 SparseClos 交换机。
 - `switch-only` 模式下，cluster 内不建立 8P fullmesh，卡只连接上方 SparseClos 交换机。
+- `cluster_layout` 支持 `contiguous` 和 `same-index-across-nodes`。默认 `contiguous` 是连续 cluster 布局；`same-index-across-nodes` 表示所有物理节点的同号卡组成一个逻辑 cluster，例如 `v=8, cluster_size=64` 时为 64 个物理节点、每节点 8 卡。
 - 可视化会把 cluster 间连接和一个代表性 cluster 内部连接分开展示：cluster 间视图不展开每个 cluster 内的所有卡，cluster 内视图用于检查 8P fullmesh 或 switch-only 结构。
 
 可视化默认使用 `simplified` 简略模式：
@@ -89,8 +90,9 @@ SparseClos 额外支持两种路由模式：
    - 对任意源卡和目的卡，枚举所有最小跳数路径。
    - 如果存在多条等价最短路径，则在这些路径之间均分 1 份流量。
 8. 固定绕路 `detour-routing`：
-   - 针对 `EP < 8` 的小通信域，使用 `card_detour`，在直接链路、同 8P 小组中转卡和上方交换机路径之间做固定分流。
-   - 针对 `EP > cluster_size` 且非整网 all2all 的通信域，使用 `cluster_detour`，允许跨 cluster 流量经第三方 cluster 中转。
+   - 针对物理 8P 内的小通信域，使用 `card_detour`，在直接链路、同 8P 小组中转卡和上方交换机路径之间做固定分流。
+   - `contiguous` 布局下，针对 `EP > cluster_size` 且非整网 all2all 的通信域，使用 `cluster_detour`，允许跨 cluster 流量经第三方 cluster 中转。
+   - `same-index-across-nodes` 布局下，`EP > cards_per_physical_node` 时不启用 `cluster_detour`，因为通信域已经可以触达完整的 SparseClos 上方交换机集合。
    - 如果某个通信域绕路后的 focus-card 效率低于最短路径，结果会回退到最短路径口径，但仍在 `detour-routing` 模式下输出。
 
 输出：
@@ -189,6 +191,7 @@ python main.py `
   --bst-k 2 `
   --switch-port-num 128 `
   --cluster-internal-mode fullmesh-plus-switch `
+  --cluster-layout same-index-across-nodes `
   --intra-bandwidth 50 `
   --switch-bandwidth 50 `
   --routing-mode shortest-path `
@@ -267,7 +270,8 @@ SparseClos JSON 配置示例：
       "bst_k": 2,
       "bst_lambda": 1,
       "switch_port_num": 128,
-      "cluster_internal_mode": "fullmesh-plus-switch"
+      "cluster_internal_mode": "fullmesh-plus-switch",
+      "cluster_layout": "same-index-across-nodes"
     },
     "intra_bandwidth": 50.0,
     "switch_bandwidth": 50.0
@@ -292,7 +296,7 @@ SparseClos JSON 配置示例：
 }
 ```
 
-该配置会推导出 `v = 8`、`b = 28`、`cluster_size = 64`、`total_cards = 512`。如果不显式配置 `domain_sizes`，SparseClos 默认输出：
+该配置会推导出 `v = 8`、`b = 28`、`cluster_size = 64`、`physical_node_count = 64`、`cards_per_physical_node = 8`、`total_cards = 512`。如果不显式配置 `domain_sizes`，SparseClos 默认输出：
 
 ```text
 2, 4, 8, 16, 32, 64, 128, 192, 256, 320, 384, 448, 512
@@ -341,6 +345,7 @@ python main.py --topology-type 2d-fm-clos --nodes 256 --cards 8 --switches 2 --f
 | `--bst-b` | 未指定 | 可选 SparseClos BST `b` 校验值；未指定时由 `v`、`r`、`k` 推导。 |
 | `--switch-port-num` | 未指定 | SparseClos 单台交换机端口数，用于推导 `cluster_size = floor(switch_port_num / k)`。 |
 | `--cluster-internal-mode` | 未指定 | SparseClos cluster 内部连接方式，可选 `fullmesh-plus-switch` 或 `switch-only`。 |
+| `--cluster-layout` | `contiguous` | SparseClos cluster 布局方式，可选 `contiguous` 或 `same-index-across-nodes`。 |
 | `--routing-mode` | `source-node-jump` | 路由模式，可选 `source-node-jump`、`destination-node-jump`、`source-2dfm-jump`、`destination-2dfm-jump`、`shortest-path`、`detour-routing`。 |
 | `--domain-size` | 未指定 | 通信域大小。可重复传入多个值；普通拓扑默认使用总卡数因数并跳过 1，SparseClos 默认使用 cluster 内因数和 cluster 倍数。 |
 | `--focus-card` | `node0-card0` | 带宽效率报告关注的网卡。 |
@@ -416,6 +421,9 @@ bst_k: 2
 bst_lambda: 1
 cluster_size: 64
 total_cards: 512
+cluster_layout: same-index-across-nodes
+physical_node_count: 64
+cards_per_physical_node: 8
 
 | 通信域 D | efficiency | route_types | focus_card_link_traffic |
 |---:|---:|---|---|

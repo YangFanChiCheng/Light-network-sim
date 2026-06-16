@@ -46,8 +46,8 @@ class MultiRailTopologyConfig:
             if self.sparse_clos is None:
                 raise ValueError("sparse_clos config is required for sparse-clos topology")
             sparse_params = derive_bst_parameters(self.sparse_clos)
-            object.__setattr__(self, "M", sparse_params["bst_v"])
-            object.__setattr__(self, "N", sparse_params["cluster_size"])
+            object.__setattr__(self, "M", sparse_params["physical_node_count"])
+            object.__setattr__(self, "N", sparse_params["cards_per_physical_node"])
             object.__setattr__(self, "X", sparse_params["bst_b"])
 
         if self.fm2d_domain_size is None:

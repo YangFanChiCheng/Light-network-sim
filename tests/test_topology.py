@@ -9,7 +9,7 @@ from multirail_topology import (
     TopologyType,
     export_topology_html,
 )
-from multirail_topology.sparse_clos import ClusterInternalMode, SparseClosConfig
+from multirail_topology.sparse_clos import ClusterInternalMode, ClusterLayout, SparseClosConfig
 from multirail_topology.visualize import build_positions
 from multirail_topology.visualize import create_topology_figure
 from multirail_topology.visualize import _omit_edge_in_simplified_view
@@ -406,9 +406,42 @@ def test_sparse_clos_topology_derives_cluster_dimensions_and_switch_blocks():
     assert graph.nodes["switch0"]["cluster_block"] == (0, 1)
     assert graph.nodes["switch1"]["cluster_block"] == (0, 2)
     assert graph.nodes["node0-card0"]["switch_groups"] == (0, 1)
+    assert graph.nodes["node0-card0"]["cluster_index"] == 0
+    assert graph.nodes["node0-card0"]["cluster_card_index"] == 0
     assert graph.has_edge("node0-card0", "switch0")
     assert graph.has_edge("node0-card0", "switch1")
     assert not graph.has_edge("node0-card0", "switch2")
+
+
+def test_sparse_clos_same_index_layout_maps_clusters_to_same_index_cards():
+    config = MultiRailTopologyConfig(
+        topology_type=TopologyType.SPARSE_CLOS,
+        sparse_clos=SparseClosConfig(
+            bst_r=7,
+            bst_k=2,
+            switch_port_num=16,
+            cluster_internal_mode=ClusterInternalMode.FULLMESH_PLUS_SWITCH,
+            cluster_layout=ClusterLayout.SAME_INDEX_ACROSS_NODES,
+        ),
+    )
+    topology = MultiRailTopology(config)
+    graph = topology.build_graph()
+
+    assert (config.M, config.N, config.X) == (8, 8, 28)
+    assert topology.summary()["compute_nodes"] == 8
+    assert topology.summary()["card_nodes"] == 64
+    assert topology.summary()["switch_nodes"] == 28
+    assert topology.summary()["intra_links"] == 8 * 28
+    assert topology.summary()["switch_links"] == 64 * 7
+    assert graph.nodes["node3-card5"]["compute_index"] == 3
+    assert graph.nodes["node3-card5"]["card_index"] == 5
+    assert graph.nodes["node3-card5"]["cluster_index"] == 5
+    assert graph.nodes["node3-card5"]["cluster_card_index"] == 3
+    assert graph.has_edge("node3-card0", "node3-card7")
+    assert not graph.has_edge("node0-card0", "node1-card0")
+    assert graph.nodes["switch4"]["cluster_block"] == (0, 5)
+    assert graph.has_edge("node3-card5", "switch4")
+    assert graph.has_edge("node7-card5", "switch4")
 
 
 def test_sparse_clos_switch_only_mode_omits_cluster_internal_fullmesh():
