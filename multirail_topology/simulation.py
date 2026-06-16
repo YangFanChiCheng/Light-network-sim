@@ -1167,7 +1167,13 @@ def _latency_for_domain_groups(
 
     best: LatencyResult | None = None
     for domain_cards in _communication_domains(topology, cards, domain_size, focus_card):
-        current = max_domain_rtt_latency(topology, domain_cards, mode, latency_config)
+        current = max_domain_rtt_latency(
+            topology,
+            domain_cards,
+            mode,
+            latency_config,
+            domain_size=domain_size,
+        )
         if best is None or current.single_rtt_latency_ns > best.single_rtt_latency_ns:
             best = current
     return best

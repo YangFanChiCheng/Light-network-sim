@@ -75,8 +75,9 @@ def route_pair_rtt_latency(
     destination_card: str,
     mode: RoutingMode,
     config: LatencyConfig,
+    domain_size: int | None = None,
 ) -> LatencyResult:
-    route = route_between_cards(topology, source_card, destination_card, mode)
+    route = route_between_cards(topology, source_card, destination_card, mode, domain_size=domain_size)
     max_path = max(
         route.paths,
         key=lambda path: path_one_way_latency_ns(topology, path, config),
@@ -95,16 +96,24 @@ def max_domain_rtt_latency(
     domain_cards: list[str],
     mode: RoutingMode,
     config: LatencyConfig,
+    domain_size: int | None = None,
 ) -> LatencyResult:
     if len(domain_cards) > 16:
-        return _max_candidate_rtt_latency(topology, domain_cards, mode, config)
+        return _max_candidate_rtt_latency(topology, domain_cards, mode, config, domain_size=domain_size)
 
     best: LatencyResult | None = None
     for source_card in domain_cards:
         for destination_card in domain_cards:
             if source_card == destination_card:
                 continue
-            current = route_pair_rtt_latency(topology, source_card, destination_card, mode, config)
+            current = route_pair_rtt_latency(
+                topology,
+                source_card,
+                destination_card,
+                mode,
+                config,
+                domain_size=domain_size,
+            )
             if best is None or current.single_rtt_latency_ns > best.single_rtt_latency_ns:
                 best = current
 
@@ -122,7 +131,13 @@ def max_domain_size_rtt_latency(
 ) -> LatencyResult:
     best: LatencyResult | None = None
     for index in range(0, len(cards), domain_size):
-        current = max_domain_rtt_latency(topology, cards[index:index + domain_size], mode, config)
+        current = max_domain_rtt_latency(
+            topology,
+            cards[index:index + domain_size],
+            mode,
+            config,
+            domain_size=domain_size,
+        )
         if best is None or current.single_rtt_latency_ns > best.single_rtt_latency_ns:
             best = current
 
@@ -136,11 +151,19 @@ def _max_candidate_rtt_latency(
     domain_cards: list[str],
     mode: RoutingMode,
     config: LatencyConfig,
+    domain_size: int | None = None,
 ) -> LatencyResult:
     candidates = _candidate_card_pairs(topology, domain_cards, mode)
     best: LatencyResult | None = None
     for source_card, destination_card in candidates:
-        current = route_pair_rtt_latency(topology, source_card, destination_card, mode, config)
+        current = route_pair_rtt_latency(
+            topology,
+            source_card,
+            destination_card,
+            mode,
+            config,
+            domain_size=domain_size,
+        )
         if best is None or current.single_rtt_latency_ns > best.single_rtt_latency_ns:
             best = current
 

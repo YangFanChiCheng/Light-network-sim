@@ -137,3 +137,30 @@ def test_sparse_clos_shortest_path_latency_uses_switch_link_timing():
 
     assert result.single_rtt_latency_ns == pytest.approx(216.0)
     assert result.path == ["node0-card0", "switch0", "node1-card0"]
+
+
+def test_sparse_clos_detour_domain_latency_uses_detour_forwarding():
+    topology = MultiRailTopology(
+        MultiRailTopologyConfig(
+            topology_type="sparse-clos",
+            sparse_clos=SparseClosConfig(
+                bst_r=7,
+                bst_k=2,
+                switch_port_num=16,
+                cluster_internal_mode=ClusterInternalMode.FULLMESH_PLUS_SWITCH,
+            ),
+        )
+    )
+    topology.build_graph()
+    cards = [f"node{node_index}-card{card_index}" for node_index in range(8) for card_index in range(8)]
+
+    result = max_domain_size_rtt_latency(
+        topology,
+        cards,
+        2,
+        RoutingMode.DETOUR_ROUTING,
+        _latency_config(),
+    )
+
+    assert result.single_rtt_latency_ns == pytest.approx(216.0)
+    assert result.path == ["node0-card0", "switch0", "node0-card1"]
