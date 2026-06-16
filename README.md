@@ -1,6 +1,6 @@
 # 多轨组网带宽效率模拟工具
 
-这是一个用于构建多轨组网拓扑、设置路由方式、模拟 All2All 流量并计算卡带宽效率的 Python 小工具。当前支持 `1d-fm-clos` 和 `2d-fm-clos` 两类拓扑。工具会生成交互式拓扑网页、任意两张卡之间的路由记录、关注卡的带宽效率报告，以及全链路流量明细。
+这是一个用于构建多轨组网拓扑、设置路由方式、模拟 All2All 流量并计算卡带宽效率的 Python 小工具。当前支持 `1d-fm-clos`、`2d-fm-clos` 和 `sparse-clos` 三类拓扑。工具会生成交互式拓扑网页、任意两张卡之间的路由记录、关注卡的带宽效率报告，以及全链路流量明细。
 
 ## 功能概览
 
@@ -29,6 +29,16 @@
 - 每个 2D FM 域内，不同节点之间的同号卡两两相连。
 - 例如 `--nodes 4 --cards 4 --fm2d-domain-size 2` 时，节点 `0,1` 是一个 2D FM 域，节点 `2,3` 是另一个 2D FM 域。
 - 在每个域内，`node0-card0` 和 `node1-card0` 相连，`node0-card1` 和 `node1-card1` 相连，依此类推。
+
+`sparse-clos` 拓扑用于建模 SparseClos / BST 平衡稀疏树：
+
+- 使用 BST 五元组 `(v, r, b, k, lambda)` 表征，其中 `v` 是 cluster 数量，`r` 是每个 cluster 连接的上方交换机数量，`b` 是实际 switch block 数量，`k` 是每台交换机连接的 cluster 数量，`lambda` 当前只支持 `1`。
+- 用户必填 `bst_r`、`bst_k` 和 `switch_port_num`；`bst_v`、`bst_b` 可选，用作校验项。
+- 当前 `lambda = 1` 时按 `v = r * (k - 1) + 1`、`b = v * r / k` 推导 BST 规模。
+- cluster 规模由 `cluster_size = floor(switch_port_num / k)` 推导。例如 `switch_port_num = 128, k = 2` 时，每个 cluster 有 64 张卡。
+- `fullmesh-plus-switch` 模式下，每个 cluster 内按连续 8P 小组建立卡间 fullmesh，其余端口连接上方 SparseClos 交换机。
+- `switch-only` 模式下，cluster 内不建立 8P fullmesh，卡只连接上方 SparseClos 交换机。
+- 可视化会把 cluster 间连接和一个代表性 cluster 内部连接分开展示：cluster 间视图不展开每个 cluster 内的所有卡，cluster 内视图用于检查 8P fullmesh 或 switch-only 结构。
 
 可视化默认使用 `simplified` 简略模式：
 
@@ -73,6 +83,16 @@
    - 再在目的 2D FM 域内路由，方式为先走同节点内 FM，再走不同节点间同号卡 FM。
    - 该模式也可能产生多条等价路径，流量模拟时同样均分流量。
 
+SparseClos 额外支持两种路由模式：
+
+7. 最短路径 `shortest-path`：
+   - 对任意源卡和目的卡，枚举所有最小跳数路径。
+   - 如果存在多条等价最短路径，则在这些路径之间均分 1 份流量。
+8. 固定绕路 `detour-routing`：
+   - 针对 `EP < 8` 的小通信域，使用 `card_detour`，在直接链路、同 8P 小组中转卡和上方交换机路径之间做固定分流。
+   - 针对 `EP > cluster_size` 且非整网 all2all 的通信域，使用 `cluster_detour`，允许跨 cluster 流量经第三方 cluster 中转。
+   - 如果某个通信域绕路后的 focus-card 效率低于最短路径，结果会回退到最短路径口径，但仍在 `detour-routing` 模式下输出。
+
 输出：
 
 - `routes.txt`：任意两张卡之间的有向路由记录。
@@ -92,6 +112,8 @@
 - 默认使用集群总卡数的所有因数，但不记录通信域大小为 1 的结果。
 - 也可以用 `--domain-size` 指定一个或多个通信域大小。
 - 指定的通信域大小必须能整除集群总卡数。
+- SparseClos 未指定 `--domain-size` 时使用专属 EP 序列：cluster 内先输出可整除 cluster 规模的 EP，超过 cluster 后输出 cluster 规模的倍数直到最大规模。
+- SparseClos 允许部分不能整除总卡数的 EP，此时只计算包含 `focus_card` 的前 `D` 张卡形成的通信域。
 
 关注卡：
 
@@ -158,6 +180,37 @@ python main.py --nodes 3 --cards 4 --switches 2 --routing-mode destination-node-
 python main.py --topology-type 2d-fm-clos --nodes 4 --cards 4 --switches 2 --fm2d-domain-size 2 --routing-mode destination-2dfm-jump
 ```
 
+生成 SparseClos / BST 拓扑，并使用最短路径路由：
+
+```powershell
+python main.py `
+  --topology-type sparse-clos `
+  --bst-r 7 `
+  --bst-k 2 `
+  --switch-port-num 128 `
+  --cluster-internal-mode fullmesh-plus-switch `
+  --intra-bandwidth 50 `
+  --switch-bandwidth 50 `
+  --routing-mode shortest-path `
+  --output topology_sparseclos.html `
+  --simulation-output simulation_sparseclos.txt
+```
+
+使用 SparseClos 固定绕路路由：
+
+```powershell
+python main.py `
+  --topology-type sparse-clos `
+  --bst-r 7 `
+  --bst-k 2 `
+  --switch-port-num 128 `
+  --cluster-internal-mode fullmesh-plus-switch `
+  --intra-bandwidth 50 `
+  --switch-bandwidth 50 `
+  --routing-mode detour-routing `
+  --simulation-output simulation_sparseclos_detour.txt
+```
+
 指定多个通信域大小：
 
 ```powershell
@@ -203,6 +256,48 @@ python main.py --config run_config.json
 }
 ```
 
+SparseClos JSON 配置示例：
+
+```json
+{
+  "topology": {
+    "type": "sparse-clos",
+    "sparse_clos": {
+      "bst_r": 7,
+      "bst_k": 2,
+      "bst_lambda": 1,
+      "switch_port_num": 128,
+      "cluster_internal_mode": "fullmesh-plus-switch"
+    },
+    "intra_bandwidth": 50.0,
+    "switch_bandwidth": 50.0
+  },
+  "routing": {
+    "mode": "detour-routing"
+  },
+  "focus_card": "node0-card0",
+  "outputs": {
+    "topology": "topology_sparseclos_r7_k2_fullmesh.html",
+    "simulation": "simulation_sparseclos_r7_k2_detour.txt"
+  },
+  "latency": {
+    "switch_forward_latency_ns": 10.0,
+    "card_forward_latency_ns": 7.0,
+    "optical_module_latency_ns": 2.0,
+    "npu_processing_latency_ns": 100.0,
+    "intra_1dfm_link_length_m": 3.0,
+    "fm2d_link_length_m": 5.0,
+    "switch_link_length_m": 4.0
+  }
+}
+```
+
+该配置会推导出 `v = 8`、`b = 28`、`cluster_size = 64`、`total_cards = 512`。如果不显式配置 `domain_sizes`，SparseClos 默认输出：
+
+```text
+2, 4, 8, 16, 32, 64, 128, 192, 256, 320, 384, 448, 512
+```
+
 指定输出文件。注意：`--simulation-output` 默认只计算关注卡相关链路，使用快速聚合算法，不展开全网所有等价路径，也不会遍历与关注卡无关的卡对。`--routes-output` 默认只写代表性路由样本；全量路由需要额外加 `--all-routes`，大规模拓扑不建议开启。`--all-links-output` 会写全有向链路明细，需要完整统计全网链路，大规模拓扑也不建议开启。
 
 ```powershell
@@ -233,14 +328,21 @@ python main.py --topology-type 2d-fm-clos --nodes 256 --cards 8 --switches 2 --f
 | `--nodes` | `4` | 计算节点数量，即拓扑参数 `M`。 |
 | `--cards` | `8` | 每个节点的网卡数量，即拓扑参数 `N`。 |
 | `--switches` | `2` | 交换机数量，即拓扑参数 `X`。要求 `X <= N`。 |
-| `--topology-type` | `1d-fm-clos` | 拓扑类型，可选 `1d-fm-clos` 或 `2d-fm-clos`。 |
+| `--topology-type` | `1d-fm-clos` | 拓扑类型，可选 `1d-fm-clos`、`2d-fm-clos` 或 `sparse-clos`。 |
 | `--intra-bandwidth` | `200.0` | 同一节点内卡到卡 FULLMesh 链路带宽。 |
 | `--switch-bandwidth` | `100.0` | 卡到交换机链路带宽。 |
 | `--fm2d-domain-size` | 等于 `--cards` | 2D FM 域内包含的计算节点数量，仅 `2d-fm-clos` 使用。 |
 | `--fm2d-bandwidth` | `200.0` | 2D FM 域内跨节点同号卡链路带宽。 |
 | `--visualization-detail` | `simplified` | 可视化详细程度，可选 `simplified` 或 `full`。 |
-| `--routing-mode` | `source-node-jump` | 路由模式，可选 `source-node-jump`、`destination-node-jump`、`source-2dfm-jump`、`destination-2dfm-jump`。 |
-| `--domain-size` | 未指定 | 通信域大小。可重复传入多个值；未指定时使用总卡数的所有因数并跳过 1。 |
+| `--bst-r` | 未指定 | SparseClos BST 参数 `r`，表示每个 cluster 连接的上方交换机数量。 |
+| `--bst-k` | 未指定 | SparseClos BST 参数 `k`，表示每台交换机连接的 cluster 数量。 |
+| `--bst-lambda` | 未指定 | SparseClos BST 参数 `lambda`，当前只支持 `1`。 |
+| `--bst-v` | 未指定 | 可选 SparseClos BST `v` 校验值；未指定时由 `r`、`k`、`lambda` 推导。 |
+| `--bst-b` | 未指定 | 可选 SparseClos BST `b` 校验值；未指定时由 `v`、`r`、`k` 推导。 |
+| `--switch-port-num` | 未指定 | SparseClos 单台交换机端口数，用于推导 `cluster_size = floor(switch_port_num / k)`。 |
+| `--cluster-internal-mode` | 未指定 | SparseClos cluster 内部连接方式，可选 `fullmesh-plus-switch` 或 `switch-only`。 |
+| `--routing-mode` | `source-node-jump` | 路由模式，可选 `source-node-jump`、`destination-node-jump`、`source-2dfm-jump`、`destination-2dfm-jump`、`shortest-path`、`detour-routing`。 |
+| `--domain-size` | 未指定 | 通信域大小。可重复传入多个值；普通拓扑默认使用总卡数因数并跳过 1，SparseClos 默认使用 cluster 内因数和 cluster 倍数。 |
 | `--focus-card` | `node0-card0` | 带宽效率报告关注的网卡。 |
 | `--output` | `topology.html` | 交互式拓扑图输出路径；当总卡数 `M * N > 256` 时自动跳过生成。 |
 | `--routes-output` | 未指定 | 代表性路由记录输出路径。默认采样两个 1DFM 或 2DFM 域，避免大规模拓扑写出全量卡对。 |
@@ -305,26 +407,36 @@ simulation.txt
 示例：
 
 ```text
-routing_mode: source-node-jump
+routing_mode: detour-routing
 focus_card: node0-card0
+bst_v: 8
+bst_r: 7
+bst_b: 28
+bst_k: 2
+bst_lambda: 1
+cluster_size: 64
+total_cards: 512
 
-| 通信域 D | S = D - 1 | 瓶颈链路 | L_max | denominator | efficiency | focus_card_link_traffic |
-|---:|---:|---|---:|---:|---:|---|
-| 2 | 1 | N0_C0 -> N0_C1 | 0.005000 | 7.500000 | 0.133333 | [1, 0, 0, 0, 0, 0, 0, 0] |
-| 4 | 3 | N0_C0 -> N0_C1 | 0.005000 | 7.500000 | 0.400000 | [1, 1, 1, 0, 0, 0, 0, 0] |
+| 通信域 D | efficiency | route_types | focus_card_link_traffic |
+|---:|---:|---|---|
+| 2 | 0.500000 | card_detour | [0.071429, 0.142857, 0.142857, 0.142857, 0.142857, 0.142857, 0.142857, 0.071429, 0.071429, 0.071429, 0.071429, 0.071429, 0.071429, 0.071429] |
+| 64 | 0.562500 | none | [1, 1, 1, 1, 1, 1, 1, 8, 8, 8, 8, 8, 8, 8] |
 
-domain_size: 4
-focus_card_sent_flows: 3
-focus_card_port_count: 8
-focus_card_efficiency_denominator: 7.500000
-focus_card_bandwidth_efficiency: 0.400000
-focus_card_link_loads: [N0_C0->N0_C1=0.005, N0_C0->N0_C2=0.005, N0_C0->N0_C3=0.005, N0_C0->N0_C4=0, N0_C0->N0_C5=0, N0_C0->N0_C6=0, N0_C0->N0_C7=0, N0_C0->S0=0]
-focus_card_link_traffic: [1, 1, 1, 0, 0, 0, 0, 0]
-max_loaded_adjacent_link: N0_C0 -> N0_C1
-max_adjacent_link_load: 0.005000
+domain_size: 2
+focus_card_sent_flows: 1
+focus_card_port_count: 14
+focus_card_efficiency_denominator: 2.000000
+focus_card_bandwidth_efficiency: 0.500000
+focus_card_link_loads: [N0_C0->N0_C1=0.001429, N0_C0->N0_C2=0.002857, N0_C0->N0_C3=0.002857, ...]
+focus_card_link_traffic: [0.071429, 0.142857, 0.142857, ...]
+detour_types: card_detour
+max_loaded_adjacent_link: N0_C0 -> N0_C2
+max_adjacent_link_load: 0.002857
 ```
 
 其中 `focus_card_link_traffic` 按固定顺序排列：先列关注卡到同节点内其他卡的出方向流量，卡序号由小到大；再列关注卡到交换机的出方向流量，交换机序号由小到大。
+
+`route_types` 仅在 `detour-routing` 模式下出现在摘要表中，取值包括 `card_detour`、`cluster_detour` 或 `none`。`none` 表示该通信域没有使用绕路，或者绕路结果低于最短路径并回退到最短路径。
 
 如果指定了时延配置，表格会额外增加 `single_rtt_latency_ns` 列，表示该通信域内任意两张卡单次 RTT 的最大静态时延。每个通信域的详情中还会输出触发最大时延的卡对和路径：
 
@@ -371,71 +483,16 @@ domain_size: 12
 - `2d-fm-clos` 模式下，`--nodes` 必须能被 `--fm2d-domain-size` 整除。
 - `--intra-bandwidth`、`--switch-bandwidth` 必须为正数。
 - `--fm2d-bandwidth` 必须为正数。
-- `--domain-size` 必须为正数，且能整除集群总卡数。
+- 普通拓扑下 `--domain-size` 必须为正数，且能整除集群总卡数。
+- SparseClos 下 `bst_r`、`bst_k` 和 `switch_port_num` 必须为正整数，`bst_k >= 2`，`bst_lambda` 当前必须为 `1`。
+- SparseClos 显式传入的 `bst_v`、`bst_b` 必须和公式推导值一致。
+- SparseClos 的 `cluster_size = floor(switch_port_num / bst_k)` 必须为正；`fullmesh-plus-switch` 模式要求 `cluster_size` 能被 8 整除。
+- SparseClos 生成的 BST blocks 必须满足每个 cluster 出现 `r` 次，任意 cluster pair 恰好共享 `lambda` 个 switch block。
 - `--focus-card` 必须是拓扑中存在的卡，例如 `node0-card0`。
 
 ## 测试
 
 运行全部测试：
-
-## SparseClos / BST 配置示例
-
-`sparse-clos` 拓扑使用 BST 五元组 `(v, r, b, k, lambda)` 表征，其中 `b` 是实际 switch block 数量。当前实现支持 `lambda = 1`、`k = 2`，以及 `k = 3` 且 `v = 6t + 3` 的 Steiner Triple System 生成方式。
-
-`switch_port_num` 和 `k` 用于推导 cluster 规模：
-
-```text
-cluster_size = floor(switch_port_num / k)
-```
-
-例如 `switch_port_num = 16, k = 2` 时，`cluster_size = 8`。下面配置会推导出 `v = 3`、`b = 3`，并输出 `D = 8` 和非整除总卡数的 `D = 16`：
-
-```json
-{
-  "topology": {
-    "type": "sparse-clos",
-    "sparse_clos": {
-      "bst_r": 2,
-      "bst_k": 2,
-      "bst_lambda": 1,
-      "bst_v": 3,
-      "bst_b": 3,
-      "switch_port_num": 16,
-      "cluster_internal_mode": "fullmesh-plus-switch"
-    },
-    "intra_bandwidth": 50.0,
-    "switch_bandwidth": 100.0
-  },
-  "routing_mode": "shortest-path",
-  "domain_sizes": [8, 16],
-  "focus_card": "node0-card0",
-  "outputs": {
-    "topology": "topology_sparseclos.html",
-    "simulation": "simulation_sparseclos.txt"
-  },
-  "latency": {
-    "switch_forward_latency_ns": 10.0,
-    "card_forward_latency_ns": 7.0,
-    "optical_module_latency_ns": 2.0,
-    "npu_processing_latency_ns": 100.0,
-    "intra_1dfm_link_length_m": 3.0,
-    "fm2d_link_length_m": 5.0,
-    "switch_link_length_m": 4.0
-  }
-}
-```
-
-运行：
-
-```powershell
-python main.py --config sparse_clos_config.json
-```
-
-如果不显式配置 `domain_sizes`，SparseClos 默认先输出 cluster 内可整除的 EP，再输出 cluster 规模的倍数，直到最大规模。例如 `cluster_size = 64` 时默认为：
-
-```text
-2, 4, 8, 16, 32, 64, 128, 192, 256, ...
-```
 
 ```powershell
 python -m pytest tests -v
@@ -448,7 +505,9 @@ python -m pytest tests -v
 - 环形可视化布局。
 - 四类路由规则。
 - 2D FullMesh + Clos 拓扑和 2D 路由规则。
+- SparseClos / BST 参数推导、block 生成、cluster 内连接、可视化和路由规则。
 - All2All 流量模拟。
 - 等价路径流量均分。
+- 绕路权重、`card_detour`、`cluster_detour` 和回退到最短路径的行为。
 - 卡带宽效率计算。
 - CLI 输出文件生成。
